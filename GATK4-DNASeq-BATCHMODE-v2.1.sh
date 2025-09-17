@@ -75,7 +75,6 @@ wait
 # 3. Mapping & Deduplication
 #############################################
 log_step "开始 Reads 映射和去重 ($SAMPLE)"
-cd $SAMPLEDIR/1.mapping || exit
 
 bwa mem -t 4 -M \
     -R "@RG\tID:$SAMPLE\tLB:$SAMPLE\tPL:ILLUMINA\tPM:HISEQ\tSM:$SAMPLE" \
@@ -95,7 +94,6 @@ samtools index $SAMPLEDIR/1.mapping/${SAMPLE}.sorted_dedup_reads.bam
 # 4. Variant Calling (按染色体)
 #############################################
 log_step "执行变异检测 ($SAMPLE)"
-cd $SAMPLEDIR/2.variants || exit
 
 grep '>' $REF_FASTA | sed 's/>//' | cut -d ' ' -f 1 > $SAMPLEDIR/2.variants/chr.list.txt
 
@@ -109,52 +107,56 @@ while read CHR; do
         -O $SAMPLEDIR/2.variants/${SAMPLE}.${CHR}.g.vcf.gz
 done < $SAMPLEDIR/2.variants/chr.list.txt
 
-gatk MergeVcfs $(for i in $(cat $SAMPLEDIR/2.variants/chr.list.txt); do echo "-I $SAMPLEDIR/2.variants/${SAMPLE}.${i}.g.vcf.gz "; done) \
-    -O $SAMPLEDIR/2.variants/${SAMPLE}.g.vcf.gz
+# 4. Variant Calling (按染色体) 合并 VCF
+CHR_LIST=$SAMPLEDIR/2.variants/chr.list.txt
+VCF_INPUTS=""
+while read CHR; do
+    VCF_INPUTS="$VCF_INPUTS -I $SAMPLEDIR/2.variants/${SAMPLE}.${CHR}.g.vcf.gz"
+done < $CHR_LIST
+
+gatk MergeVcfs $VCF_INPUTS -O $SAMPLEDIR/2.variants/${SAMPLE}.g.vcf.gz
 
 cp $SAMPLEDIR/2.variants/${SAMPLE}.g.vcf.gz* $SAMPLEDIR/3.output/
 
 #############################################
 # 5. Variant Filtration & Annotation
 #############################################
-cd $SAMPLEDIR/3.output
-
-gatk CombineGVCFs -R $REF_FASTA --variant ${SAMPLE}.g.vcf.gz --variant $REF_GVCF -O ${SAMPLE}.combine.g.vcf.gz
-gatk GenotypeGVCFs -R $REF_FASTA -V ${SAMPLE}.combine.g.vcf.gz -O ${SAMPLE}.raw.vcf.gz
+gatk CombineGVCFs -R $REF_FASTA --variant $SAMPLEDIR/3.output/${SAMPLE}.g.vcf.gz --variant $REF_GVCF -O $SAMPLEDIR/3.output/${SAMPLE}.combine.g.vcf.gz
+gatk GenotypeGVCFs -R $REF_FASTA -V $SAMPLEDIR/3.output/${SAMPLE}.combine.g.vcf.gz -O $SAMPLEDIR/3.output/${SAMPLE}.raw.vcf.gz
 
 # SNP
-gatk SelectVariants -R $REF_FASTA -V $SAMPLE.raw.vcf.gz --select-type-to-include SNP --restrict-alleles-to BIALLELIC -O $SAMPLE.raw.snp.vcf.gz
-gatk VariantFiltration -R $REF_FASTA -V $SAMPLE.raw.snp.vcf.gz -O $SAMPLE.flag.snp.vcf.gz \
+gatk SelectVariants -R $REF_FASTA -V $SAMPLEDIR/3.output/${SAMPLE}.raw.vcf.gz --select-type-to-include SNP --restrict-alleles-to BIALLELIC -O $SAMPLEDIR/3.output/${SAMPLE}.raw.snp.vcf.gz
+gatk VariantFiltration -R $REF_FASTA -V $SAMPLEDIR/3.output/${SAMPLE}.raw.snp.vcf.gz -O $SAMPLEDIR/3.output/${SAMPLE}.flag.snp.vcf.gz \
     -filter-name "hard_filter" -filter "QD < 2.0 || SOR > 3.0 || FS > 60.0 || MQ < 40.0 || MQRankSum < -12.5 || ReadPosRankSum < -8.0"
-gatk SelectVariants -V $SAMPLE.flag.snp.vcf.gz -O $SAMPLE.cleaned.snp.vcf.gz --exclude-filtered
-gatk VariantFiltration -R $REF_FASTA -V $SAMPLE.cleaned.snp.vcf.gz -O $SAMPLE.flag2.snp.vcf.gz \
+gatk SelectVariants -V $SAMPLEDIR/3.output/${SAMPLE}.flag.snp.vcf.gz -O $SAMPLEDIR/3.output/${SAMPLE}.cleaned.snp.vcf.gz --exclude-filtered
+gatk VariantFiltration -R $REF_FASTA -V $SAMPLEDIR/3.output/${SAMPLE}.cleaned.snp.vcf.gz -O $SAMPLEDIR/3.output/${SAMPLE}.flag2.snp.vcf.gz \
     -filter-name "Mutant_in_WT_filter" -filter "vc.getGenotype('$CONTROL').getAlleles().contains(vc.getAlternateAllele(0))" \
     -filter-name "noCall_in_WT_filter" -filter "vc.getGenotype('$CONTROL').isNoCall()" \
     -filter-name "LowDP_in_SAMPLE_filter" -filter "vc.getGenotype('$SAMPLE').getDP() < 0.1 * $DEPTH" \
     -filter-name "het_in_SAMPLE_filter" -filter "vc.getGenotype('$SAMPLE').getAD().1 / vc.getGenotype('$SAMPLE').getDP() < 0.90"
-gatk SelectVariants -V $SAMPLE.flag2.snp.vcf.gz -O $SAMPLE.final.snp.vcf.gz --exclude-filtered
+gatk SelectVariants -V $SAMPLEDIR/3.output/${SAMPLE}.flag2.snp.vcf.gz -O $SAMPLEDIR/3.output/${SAMPLE}.final.snp.vcf.gz --exclude-filtered
 
 # INDEL
-gatk SelectVariants -R $REF_FASTA -V $SAMPLE.raw.vcf.gz --select-type-to-include INDEL --restrict-alleles-to BIALLELIC -O $SAMPLE.raw.indel.vcf.gz
-gatk VariantFiltration -R $REF_FASTA -V $SAMPLE.raw.indel.vcf.gz -O $SAMPLE.flag.indel.vcf.gz \
+gatk SelectVariants -R $REF_FASTA -V $SAMPLEDIR/3.output/${SAMPLE}.raw.vcf.gz --select-type-to-include INDEL --restrict-alleles-to BIALLELIC -O $SAMPLEDIR/3.output/${SAMPLE}.raw.indel.vcf.gz
+gatk VariantFiltration -R $REF_FASTA -V $SAMPLEDIR/3.output/${SAMPLE}.raw.indel.vcf.gz -O $SAMPLEDIR/3.output/${SAMPLE}.flag.indel.vcf.gz \
     -filter-name "hard_filter" -filter "QD < 2.0 || FS > 200.0 || SOR > 10.0 || MQRankSum < -12.5 || ReadPosRankSum < -20.0"
-gatk SelectVariants -V $SAMPLE.flag.indel.vcf.gz -O $SAMPLE.cleaned.indel.vcf.gz --exclude-filtered
-gatk VariantFiltration -R $REF_FASTA -V $SAMPLE.cleaned.indel.vcf.gz -O $SAMPLE.flag2.indel.vcf.gz \
+gatk SelectVariants -V $SAMPLEDIR/3.output/${SAMPLE}.flag.indel.vcf.gz -O $SAMPLEDIR/3.output/${SAMPLE}.cleaned.indel.vcf.gz --exclude-filtered
+gatk VariantFiltration -R $REF_FASTA -V $SAMPLEDIR/3.output/${SAMPLE}.cleaned.indel.vcf.gz -O $SAMPLEDIR/3.output/${SAMPLE}.flag2.indel.vcf.gz \
     -filter-name "Mutant_in_WT_filter" -filter "vc.getGenotype('$CONTROL').getAlleles().contains(vc.getAlternateAllele(0))" \
     -filter-name "noCall_in_WT_filter" -filter "vc.getGenotype('$CONTROL').isNoCall()" \
     -filter-name "LowDP_in_SAMPLE_filter" -filter "vc.getGenotype('$SAMPLE').getDP() < 0.1 * $DEPTH" \
     -filter-name "het_in_SAMPLE_filter" -filter "vc.getGenotype('$SAMPLE').getAD().1 / vc.getGenotype('$SAMPLE').getDP() < 0.90"
-gatk SelectVariants -V $SAMPLE.flag2.indel.vcf.gz -O $SAMPLE.final.indel.vcf.gz --exclude-filtered
+gatk SelectVariants -V $SAMPLEDIR/3.output/${SAMPLE}.flag2.indel.vcf.gz -O $SAMPLEDIR/3.output/${SAMPLE}.final.indel.vcf.gz --exclude-filtered
 
 # 合并并注释
-gatk MergeVcfs -I $SAMPLE.final.snp.vcf.gz -I $SAMPLE.final.indel.vcf.gz -O $SAMPLE.final.combine.vcf.gz
-$ANNOVAR/convert2annovar.pl -format vcf4old --includeinfo $SAMPLE.final.combine.vcf.gz > $SAMPLE.combine.annovar
-$ANNOVAR/annotate_variation.pl --geneanno --outfile $SAMPLE.combine --buildver $SPECIES $SAMPLE.combine.annovar $ANNOV_DATABASE
+gatk MergeVcfs -I $SAMPLEDIR/3.output/${SAMPLE}.final.snp.vcf.gz -I $SAMPLEDIR/3.output/${SAMPLE}.final.indel.vcf.gz -O $SAMPLEDIR/3.output/${SAMPLE}.final.combine.vcf.gz
+$ANNOVAR/convert2annovar.pl -format vcf4old --includeinfo $SAMPLEDIR/3.output/${SAMPLE}.final.combine.vcf.gz > $SAMPLEDIR/3.output/${SAMPLE}.combine.annovar
+$ANNOVAR/annotate_variation.pl --geneanno --outfile $SAMPLEDIR/3.output/${SAMPLE}.combine --buildver $SPECIES $SAMPLEDIR/3.output/${SAMPLE}.combine.annovar $ANNOV_DATABASE
 
-cp $SAMPLE.final.snp.vcf.gz $SAMPLEDIR/4.annotate/
-cp $SAMPLE.final.indel.vcf.gz $SAMPLEDIR/4.annotate/
-cp $SAMPLE.combine.variant_function $SAMPLEDIR/4.annotate/
-cp $SAMPLE.combine.exonic_variant_function $SAMPLEDIR/4.annotate/
+cp $SAMPLEDIR/3.output/${SAMPLE}.final.snp.vcf.gz $SAMPLEDIR/4.annotate/
+cp $SAMPLEDIR/3.output/${SAMPLE}.final.indel.vcf.gz $SAMPLEDIR/4.annotate/
+cp $SAMPLEDIR/3.output/${SAMPLE}.combine.variant_function $SAMPLEDIR/4.annotate/
+cp $SAMPLEDIR/3.output/${SAMPLE}.combine.exonic_variant_function $SAMPLEDIR/4.annotate/
 
 #############################################
 # 6. 清理中间文件（仅当 BAM 文件大于 1GB）
