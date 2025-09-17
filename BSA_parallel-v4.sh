@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J GTRC
+#SBATCH -J GTRC-Pool
 #SBATCH -p Acluster
 #SBATCH -n 1
 #SBATCH -c 8
@@ -23,11 +23,30 @@ SNP_SITES=/Share/home/dengzg1993/Analyses/DNASeq/Physcomitrella/1.WGS/05.Villers
 # -----------------------------
 dos2unix $WORKDIR/sample_pool.tsv
 
-# mut 样本
-read SAMPLE_MUT READ1_MUT READ2_MUT PLOIDY_MUT DEPTH_MUT < <(awk 'NR==2 {print $1, $2, $3, $4, $5}' $WORKDIR/sample_pool.tsv)
+read SAMPLE_MUT READ1_MUT READ2_MUT PLOIDY_MUT < <(awk 'NR==2 {print $1, $2, $3, $4}' $WORKDIR/sample_pool.tsv)
+read SAMPLE_WT READ1_WT READ2_WT PLOIDY_WT < <(awk 'NR==3 {print $1, $2, $3, $4}' $WORKDIR/sample_pool.tsv)
 
-# WT 样本
-read SAMPLE_WT READ1_WT READ2_WT PLOIDY_WT DEPTH_WT < <(awk 'NR==3 {print $1, $2, $3, $4, $5}' $WORKDIR/sample_pool.tsv)
+# -----------------------------
+estimate_depth() {
+    local sample_name=$1
+    local read1=$2
+    local __resultvar=$3   # 传入变量名，用于返回值
+
+    NUM_READS_R1=$(zcat "$read1" | wc -l)
+    NUM_READS_R1=$((NUM_READS_R1/4))
+
+    GENOME_SIZE=$(grep -v ">" "$REF_FASTA" | wc -c)
+    DEPTH=$(echo "$NUM_READS_R1 * 150 * 2 / $GENOME_SIZE" | bc)
+	
+    echo "Estimated depth is '$DEPTH' ($sample_name)"
+	
+    # 返回结果
+    eval $__resultvar="'$DEPTH'"
+}
+
+estimate_depth "$SAMPLE_MUT" "$READ1_MUT" DEPTH_MUT
+estimate_depth "$SAMPLE_WT" "$READ1_WT" DEPTH_WT
+	
 
 # -----------------------------
 # 初始化目录

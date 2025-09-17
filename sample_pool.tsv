@@ -1,4 +1,3 @@
-# sample_pool.tsv
-SAMPLE   READ1                                READ2                                PLOIDY  DEPTH
-DONG-pool   /path/to/DONG-pool_R1.fq.gz    /path/to/DONG-pool_R2.fq.gz         36     50
-WT-pool     /path/to/WT-pool_R1.fq.gz      /path/to/WT-pool_R2.fq.gz           36     50
+SAMPLE	READ1	READ2	PLOIDY
+mut-pool	/path/mut-pool_R1.fq.gz	/path/mut-pool_R2.fq.gz	48
+WT-pool	/path/WT-pool_R1.fq.gz	/path/WT-pool_R2.fq.gz	48
